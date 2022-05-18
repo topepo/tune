@@ -245,6 +245,39 @@ tune_grid_loop_iter <- function(split,
     # for metrics, may need to get all out-of-sample predictions and
     # compute them ourselves.
 
+    # TODO h2o
+    # We will get all of the model predictions back at once (i.e. over all of
+    # the model grid values.
+    # We will need the grid of preprocessor and model tuning parameters.
+    # Here's an example:
+
+    current_grid <-
+      grid_info %>%
+      slice(iter_preprocessor) %>%
+      unnest(cols = data) %>%
+      # how do we know the column names?
+      select(all_of(preprocessor_param_names),
+             all_of(model_param_names),
+             .iter_config) %>%
+      unnest(cols = .iter_config)
+
+    # So h2o.grid and other functions result in list of predictions (or metrics).
+    # For predictions, we should attach each row of `current_grid` to the corresponding
+    # prediction list element
+
+    # In the end, we want to emulate the data structure produced by this code:
+
+    # out_predictions <- append_predictions(
+    #   collection = out_predictions,
+    #   predictions = iter_predictions,
+    #   split = split,
+    #   control = control,
+    #   .config = iter_config_metrics
+    # )
+
+
+
+
     for (iter_model in iter_models) { # <- h2o.grid()
       workflow <- workflow_preprocessed
 
