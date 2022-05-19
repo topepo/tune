@@ -2,13 +2,14 @@ library(h2oparsnip)
 library(modeldata)
 library(tidymodels)
 library(h2o)
+library(foreach)
 h2o.init()
 
 data(two_class_dat)
-doParallel::registerDoParallel()
+# doParallel::registerDoParallel()
 # model and workflow spec
 folds <- vfold_cv(two_class_dat, nfolds = 10)
-glm_spec <- logistic_reg(penalty = tune("lambda")) |>
+glm_spec <- logistic_reg(penalty = tune("lambda"), mixture = tune("alpha")) |>
     set_engine("h2o")
 
 rec <- recipe(Class ~ A + B, two_class_dat) %>%
@@ -23,9 +24,9 @@ pset <- extract_parameter_set_dials(wf)
 model_param_names <- dplyr::filter(pset, source == "model_spec")$id
 grid <- dials::grid_regular(pset, levels = 5)
 
-grid <- check_grid(grid = grid, workflow = wf, pset = pset)
-grid_info <- compute_grid_info(wf, grid)
-control <- control_grid()
+grid <- tune:::check_grid(grid = grid, workflow = wf, pset = pset)
+grid_info <- tune:::compute_grid_info(wf, grid)
+control <- control_grid(verbose = TRUE)
 packages <- c(control$pkgs, required_pkgs(wf))
 n_resamples <- nrow(folds)
 iterations <- seq_len(n_resamples)
@@ -49,7 +50,7 @@ out_notes <-
 grid_info_nest <- tidyr::nest(grid_info, data = !!cols)
 
 # looping through resamples
-seeds <- generate_seeds(rng = TRUE, n_resamples)
+seeds <- tune:::generate_seeds(rng = TRUE, n_resamples)
 
 results <- foreach::foreach(
     split = splits,
@@ -57,13 +58,15 @@ results <- foreach::foreach(
     .packages = packages,
     .errorhandling = "pass"
 ) %dopar% {
-    tune_grid_loop_iter_h2o(
+    tune:::tune_grid_loop_iter_h2o(
       split = split,
       grid_info = grid_info_nest,
       workflow = wf,
       seed = seed
     )
 }
+
+results <- tibble::tibble(.predictions = results)
 
 results[[1L]]
 str(results[[1L]][[".metrics"]][[1L]], max.level = 2)
