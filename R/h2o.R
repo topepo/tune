@@ -1,3 +1,7 @@
+as_h2o <- function(df, destination_frame_prefix) {
+  as.h2o(df, destination_frame = paste(destination_frame_prefix, runif(1)))
+}
+
 is_h2o <- function(object, ...) {
     UseMethod("is_h2o")
 }
@@ -74,7 +78,7 @@ tune_grid_loop_iter_h2o <- function(
     preprocessor <- extract_recipe(workflow)
 
     # prep training and validation data
-    training_frame_proccessed <- bake(preprocessor, new_data = training_frame)
+    training_frame_processed <- bake(preprocessor, new_data = training_frame)
     val_frame_processed <- bake(preprocessor, new_data = val_frame)
     iter_grid_info_models <- iter_grid_info[["data"]][[1L]]
 
@@ -93,11 +97,12 @@ tune_grid_loop_iter_h2o <- function(
                                    %>% unique()) %>%
       purrr::set_names(model_param_names)
 
+    training_frame_processed <- as_h2o(training_frame_processed, "training_frame")
     h2o_res <- h2o.grid(
       "glm",
       x = predictors,
       y = outcome,
-      training_frame = as.h2o(training_frame_proccessed, destination_frame = paste0("training_frame", runif(1))),
+      training_frame = ,
       hyper_params = h2o_hyper_params
     )
 
@@ -129,8 +134,7 @@ tune_grid_loop_iter_h2o <- function(
 
 
 pull_h2o_predictions <- function(h2o_model, val_frame, split) {
-  val_frame <- as.h2o(val_frame,
-                     destination_frame = paste0("val_frame", runif(1)))
+  val_frame <- as_h2o(val_frame, "val_frame")
 
   orig_rows <- as.integer(split, data = "assessment")
   h2o_preds <- h2o.predict(h2o_model, val_frame)
@@ -138,8 +142,7 @@ pull_h2o_predictions <- function(h2o_model, val_frame, split) {
 }
 
 pull_h2o_metrics <- function(h2o_model, val_frame) {
-  val_frame <- as.h2o(val_frame,
-                     destination_frame = paste0("val_frame", runif(1)))
+  val_frame <- as_h2o(val_frame, "val_frame")
   metrics <- slot(h2o.performance(h2o_model, val_frame), "metrics")
   metrics
 }
