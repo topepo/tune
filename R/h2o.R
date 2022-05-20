@@ -45,8 +45,6 @@ extract_h2o_spec.model_spec <- function(model_spec, ...) {
   list(algorithm = algorithm, model_name = model_name)
 }
 
-#' @export
-#' @rdname extract_h2o_algorithm
 extract_h2o_algorithm.workflow <- function(workflow, ...) {
   model_spec <- hardhat::extract_spec_parsnip(workflow)
   extract_h2o_algorithm.model_spec(model_spec)
@@ -162,10 +160,9 @@ tune_grid_loop_iter_h2o <- function(split,
     )
 
     h2o_model_ids <- h2o_res@model_ids
-    h2o_models <- lapply(h2o_model_ids, h2o.getModel)
-    h2o_preds <- lapply(h2o_models, pull_h2o_predictions, val_frame_processed, split)
-
-    h2o_metrics <- lapply(h2o_models, pull_h2o_metrics, val_frame_processed)
+    h2o_models <- purrr::map(h2o_model_ids, h2o.getModel)
+    h2o_preds <- purrr::map(h2o_models, pull_h2o_predictions, val_frame_processed, split)
+    h2o_metrics <- purrr::map(h2o_models, pull_h2o_metrics, val_frame_processed)
 
     grid_out <- iter_grid_info %>%
       dplyr::unnest(cols = data) %>%
@@ -189,8 +186,6 @@ tune_grid_loop_iter_h2o <- function(split,
 
   out
 }
-
-
 
 pull_h2o_predictions <- function(h2o_model, val_frame, split) {
   val_frame <- as_h2o(val_frame, "val_frame")
