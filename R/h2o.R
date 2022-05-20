@@ -1,12 +1,12 @@
 #' Extract h2o algorithm from model and workflow
 #' @export
 extract_h2o_spec <- function(object, ...) {
-  UseMethod("extract_h2o_algorithm")
+  UseMethod("extract_h2o_spec")
 }
 
 extract_h2o_spec.default <- function(object, ...) {
   msg <- paste0(
-    "The first argument to [extract_h2o_algorithm] should be either ",
+    "The first argument to [extract_h2o_spec] should be either ",
     "a model or workflow."
   )
   rlang::abort(msg)
@@ -45,13 +45,13 @@ extract_h2o_spec.model_spec <- function(model_spec, ...) {
   list(algorithm = algorithm, model_name = model_name)
 }
 
-extract_h2o_algorithm.workflow <- function(workflow, ...) {
+extract_h2o_spec.workflow <- function(workflow, ...) {
   model_spec <- hardhat::extract_spec_parsnip(workflow)
-  extract_h2o_algorithm.model_spec(model_spec)
+  extract_h2o_spec(model_spec)
 }
 
 as_h2o <- function(df, destination_frame_prefix) {
-  as.h2o(df, destination_frame = paste(destination_frame_prefix, runif(1)))
+  as.h2o(df, destination_frame = paste(destination_frame_prefix, runif(1), sep = "_"))
 }
 
 is_h2o <- function(object, ...) {
@@ -150,7 +150,7 @@ tune_grid_loop_iter_h2o <- function(split,
       purrr::set_names(model_param_names)
 
     training_frame_processed <- as_h2o(training_frame_processed, "training_frame")
-    h2o_spec <- extract_h2o_algorithm.workflow(workflow)
+    h2o_spec <- extract_h2o_spec.workflow(workflow)
     h2o_res <- h2o::h2o.grid(
       h2o_spec$algorithm,
       x = predictors,
