@@ -35,8 +35,8 @@ tune_grid_loop_iter_h2o <- function(
   load_pkgs(workflow)
   load_namespace(control$pkgs)
 
-  training_frame <- analysis(split)
-  val_frame <- assessment(split)
+  training_frame <- rsample::analysis(split)
+  val_frame <- rsample::assessment(split)
   workflow_original <- wf
 
   pset <- hardhat::extract_parameter_set_dials(workflow_original)
@@ -78,8 +78,8 @@ tune_grid_loop_iter_h2o <- function(
     preprocessor <- extract_recipe(workflow)
 
     # prep training and validation data
-    training_frame_processed <- bake(preprocessor, new_data = training_frame)
-    val_frame_processed <- bake(preprocessor, new_data = val_frame)
+    training_frame_processed <- recipes::bake(preprocessor, new_data = training_frame)
+    val_frame_processed <- recipes::bake(preprocessor, new_data = val_frame)
     iter_grid_info_models <- iter_grid_info[["data"]][[1L]]
 
     # extract outcome and predictor names (used by h2o.grid)
@@ -93,12 +93,12 @@ tune_grid_loop_iter_h2o <- function(
 
     # extract hyper params into list
     h2o_hyper_params <- purrr::map(model_param_names,
-                                   ~ pull(iter_grid_info_models, .)
+                                   ~ dplyr::pull(iter_grid_info_models, .)
                                    %>% unique()) %>%
       purrr::set_names(model_param_names)
 
     training_frame_processed <- as_h2o(training_frame_processed, "training_frame")
-    h2o_res <- h2o.grid(
+    h2o_res <- h2o::h2o.grid(
       "glm",
       x = predictors,
       y = outcome,
@@ -113,14 +113,16 @@ tune_grid_loop_iter_h2o <- function(
     h2o_metrics <- lapply(h2o_models, pull_h2o_metrics, val_frame_processed)
 
     grid_out <- iter_grid_info %>%
-      unnest(cols = data) %>%
-      select(all_of(preprocessor_param_names),
-             all_of(model_param_names),
-             .iter_config) %>%
-      unnest(.iter_config) %>%
-      mutate(.pred = h2o_preds,
+      dplyr::unnest(cols = data) %>%
+      dplyr::select(
+        all_of(preprocessor_param_names),
+        all_of(model_param_names),
+        .iter_config
+      ) %>%
+      dplyr::unnest(.iter_config) %>%
+      dplyr::mutate(.pred = h2o_preds,
              .metrics = h2o_metrics) %>%
-      unnest(.pred)
+      dplyr::unnest(.pred)
 
     out[[iter_preprocessor]] <- grid_out
   }
@@ -137,13 +139,13 @@ pull_h2o_predictions <- function(h2o_model, val_frame, split) {
   val_frame <- as_h2o(val_frame, "val_frame")
 
   orig_rows <- as.integer(split, data = "assessment")
-  h2o_preds <- h2o.predict(h2o_model, val_frame)
-  tibble::as_tibble(h2o_preds) %>% mutate(.row = orig_rows)
+  h2o_preds <- h2o::h2o.predict(h2o_model, val_frame)
+  tibble::as_tibble(h2o_preds) %>% dplyr::mutate(.row = orig_rows)
 }
 
 pull_h2o_metrics <- function(h2o_model, val_frame) {
   val_frame <- as_h2o(val_frame, "val_frame")
-  metrics <- slot(h2o.performance(h2o_model, val_frame), "metrics")
+  metrics <- slot(h2o::h2o.performance(h2o_model, val_frame), "metrics")
   metrics
 }
 
