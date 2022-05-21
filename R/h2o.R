@@ -167,8 +167,8 @@ tune_grid_loop_iter_h2o <- function(split,
     grid_out <- iter_grid_info %>%
       dplyr::unnest(cols = data) %>%
       dplyr::select(
-        all_of(preprocessor_param_names),
-        all_of(model_param_names),
+        dplyr::all_of(preprocessor_param_names),
+        dplyr::all_of(model_param_names),
         .iter_config
       ) %>%
       dplyr::unnest(.iter_config) %>%
@@ -182,7 +182,7 @@ tune_grid_loop_iter_h2o <- function(split,
   }
 
   out <- vctrs::vec_rbind(!!!out) %>%
-    bind_cols(labels(split))
+    dplyr::bind_cols(labels(split))
 
   out
 }
