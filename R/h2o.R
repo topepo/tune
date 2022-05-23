@@ -1,76 +1,33 @@
-#' Extract h2o algorithm from model and workflow
-#' @export
-extract_h2o_spec <- function(object, ...) {
-  UseMethod("extract_h2o_spec")
-}
-
-extract_h2o_spec.default <- function(object, ...) {
-  msg <- paste0(
-    "The first argument to [extract_h2o_spec] should be either ",
-    "a model or workflow."
-  )
-  rlang::abort(msg)
-}
-
-extract_h2o_spec.model_spec <- function(model_spec, ...) {
-  if (inherits(model_spec, "boost_tree")) {
-    model_name <- "boost_tree"
-    algorithm <- "gbm"
-  }
-  if (inherits(model_spec, "rand_forest")) {
-    model_name <- "rand_forest"
-    algorithm <- "randomForest"
-  }
-  if (inherits(model_spec, "linear_reg")) {
-    model_name <- "linear_reg"
-    algorithm <- "glm"
-  }
-  if (inherits(model_spec, "logistic_reg")) {
-    model_name <- "logistic_reg"
-    algorithm <- "glm"
-  }
-  if (inherits(model_spec, "multinom_reg")) {
-    model_name <- "multinom_reg"
-    algorithm <- "glm"
-  }
-  if (inherits(model_spec, "mlp")) {
-    model_name <- "mlp"
-    algorithm <- "deeplearning"
-  }
-  if (inherits(model_spec, "naive_Bayes")) {
-    model_name <- "naive_Bayes"
-    algorithm <- "naiveBayes"
-  }
-
-  list(algorithm = algorithm, model_name = model_name)
-}
-
-extract_h2o_spec.workflow <- function(workflow, ...) {
+extract_h2o_algorithm <- function(workflow, ...) {
   model_spec <- hardhat::extract_spec_parsnip(workflow)
-  extract_h2o_spec(model_spec)
+  model_class <- class(model_spec)[1]
+  all_algos <- c("boost_tree", "rand_forest", "linear_reg", "logistic_reg",
+                 "multinom_reg", "mlp", "naive_Bayes")
+  algo <- switch(model_class,
+         boost_tree = "gbm",
+         rand_forest = "randomForest",
+         linear_reg  = "glm",
+         logistic_reg = "glm",
+         multinom_reg = "glm",
+         mlp = "deeplearning",
+         naive_Bayes = "naive_bayes",
+         rlang::abort(
+           glue::glue("Model `{model_class}` is not supported by the h2o engine, use one of { toString(all_algos) }")
+         )
+    )
+  algo
 }
+
 
 as_h2o <- function(df, destination_frame_prefix) {
-  as.h2o(df, destination_frame = paste(destination_frame_prefix, runif(1), sep = "_"))
-}
-
-is_h2o <- function(object, ...) {
-  UseMethod("is_h2o")
-}
-
-is_h2o.default <- function(object, ...) {
-  msg <- paste0(
-    "The first argument to [is_h2o] should be either ",
-    "a model or workflow."
+  id <- paste(destination_frame_prefix, runif(1), sep = "_")
+  list(
+    data = as.h2o(df, destination_frame = id),
+    id = id
   )
-  rlang::abort(msg)
 }
 
-is_h2o.model_spec <- function(object, ...) {
-  identical(object$engine, "h2o")
-}
-
-is_h2o.workflow <- function(object, ...) {
+is_h2o <- function(workflow, ...) {
   model_spec <- hardhat::extract_spec_parsnip(object)
   identical(model_spec$engine, "h2o")
 }
@@ -94,6 +51,8 @@ tune_grid_loop_iter_h2o <- function(split,
   preprocessor_params <- dplyr::filter(pset, source == "recipe")
   model_param_names <- dplyr::pull(model_params, "id")
   preprocessor_param_names <- dplyr::pull(preprocessor_params, "id")
+  orig_rows <- as.integer(split, data = "assessment")
+
 
   iter_preprocessors <- grid_info[[".iter_preprocessor"]]
   out <- vector("list", length(iter_preprocessors))
@@ -149,36 +108,41 @@ tune_grid_loop_iter_h2o <- function(split,
     ) %>%
       purrr::set_names(model_param_names)
 
-    training_frame_processed <- as_h2o(training_frame_processed, "training_frame")
-    h2o_spec <- extract_h2o_spec.workflow(workflow)
+    h2o_training_frame <- as_h2o(training_frame_processed, "training_frame")
+    h2o_val_frame <- as_h2o(val_frame_processed, "val_frame")
+
+    h2o_algo <- extract_h2o_algorithm(workflow)
     h2o_res <- h2o::h2o.grid(
-      h2o_spec$algorithm,
+      h2o_algo,
       x = predictors,
       y = outcome,
-      training_frame = training_frame_processed,
+      training_frame = h2o_training_frame$data,
       hyper_params = h2o_hyper_params
     )
 
-    h2o_model_ids <- h2o_res@model_ids
+    h2o_model_ids <- as.character(h2o_res@model_ids)
     h2o_models <- purrr::map(h2o_model_ids, h2o.getModel)
-    h2o_preds <- purrr::map(h2o_models, pull_h2o_predictions, val_frame_processed, split)
-    h2o_metrics <- purrr::map(h2o_models, pull_h2o_metrics, val_frame_processed)
+    h2o_preds <- purrr::map(h2o_models, pull_h2o_predictions, h2o_val_frame$data, orig_rows)
+    h2o_metrics <- purrr::map(h2o_models, pull_h2o_metrics, h2o_val_frame$data)
 
     grid_out <- iter_grid_info %>%
-      dplyr::unnest(cols = data) %>%
+      tidyr::unnest(cols = data) %>%
       dplyr::select(
         dplyr::all_of(preprocessor_param_names),
         dplyr::all_of(model_param_names),
         .iter_config
       ) %>%
-      dplyr::unnest(.iter_config) %>%
+      tidyr::unnest(.iter_config) %>%
       dplyr::mutate(
         .pred = h2o_preds,
         .metrics = h2o_metrics
       ) %>%
-      dplyr::unnest(.pred)
+      tidyr::unnest(.pred)
 
     out[[iter_preprocessor]] <- grid_out
+
+    # remove objects from h2o server
+    h2o::h2o.rm(c(h2o_model_ids, h2o_training_frame$id, h2o_val_frame$id))
   }
 
   out <- vctrs::vec_rbind(!!!out) %>%
@@ -187,16 +151,12 @@ tune_grid_loop_iter_h2o <- function(split,
   out
 }
 
-pull_h2o_predictions <- function(h2o_model, val_frame, split) {
-  val_frame <- as_h2o(val_frame, "val_frame")
-
-  orig_rows <- as.integer(split, data = "assessment")
+pull_h2o_predictions <- function(h2o_model, val_frame, orig_rows) {
   h2o_preds <- h2o::h2o.predict(h2o_model, val_frame)
   tibble::as_tibble(h2o_preds) %>% dplyr::mutate(.row = orig_rows)
 }
 
 pull_h2o_metrics <- function(h2o_model, val_frame) {
-  val_frame <- as_h2o(val_frame, "val_frame")
   metrics <- slot(h2o::h2o.performance(h2o_model, val_frame), "metrics")
   metrics
 }
