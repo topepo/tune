@@ -36,21 +36,27 @@ is_h2o <- function(workflow, ...) {
 tune_grid_loop_iter_h2o <- function(split,
                                     grid_info,
                                     workflow,
-                                    seed,
-                                    metrics = NULL,
-                                    control = control_grid()) {
+                                    metrics,
+                                    control,
+                                    seed) {
   load_pkgs(workflow)
   load_namespace(control$pkgs)
 
   training_frame <- rsample::analysis(split)
   val_frame <- rsample::assessment(split)
+  mode <- hardhat::extract_spec_parsnip(wf)$mode
   workflow_original <- wf
 
   pset <- hardhat::extract_parameter_set_dials(workflow_original)
+  param_names <- dplyr::pull(pset, "id")
   model_params <- dplyr::filter(pset, source == "model_spec")
   preprocessor_params <- dplyr::filter(pset, source == "recipe")
   model_param_names <- dplyr::pull(model_params, "id")
   preprocessor_param_names <- dplyr::pull(preprocessor_params, "id")
+
+
+  outcome_name <- outcome_names(workflow)
+  event_level <- control$event_level
   orig_rows <- as.integer(split, data = "assessment")
 
 
@@ -68,6 +74,7 @@ tune_grid_loop_iter_h2o <- function(split,
       .data = iter_grid_info,
       dplyr::all_of(preprocessor_param_names)
     )
+
 
     iter_msg_preprocessor <- iter_grid_info[[".msg_preprocessor"]]
 
@@ -89,7 +96,14 @@ tune_grid_loop_iter_h2o <- function(split,
     # prep training and validation data
     training_frame_processed <- recipes::bake(preprocessor, new_data = training_frame)
     val_frame_processed <- recipes::bake(preprocessor, new_data = val_frame)
-    iter_grid_info_models <- iter_grid_info[["data"]][[1L]]
+
+    iter_grid_info_models <- iter_grid_info[["data"]][[1L]] %>%
+      dplyr::select(dplyr::all_of(model_param_names))
+
+    iter_grid <- dplyr::bind_cols(
+      iter_grid_preprocessor,
+      iter_grid_info_models
+    )
 
     # extract outcome and predictor names (used by h2o.grid)
     outcome <- preprocessor$term_info %>%
@@ -122,8 +136,23 @@ tune_grid_loop_iter_h2o <- function(split,
 
     h2o_model_ids <- as.character(h2o_res@model_ids)
     h2o_models <- purrr::map(h2o_model_ids, h2o.getModel)
-    h2o_preds <- purrr::map(h2o_models, pull_h2o_predictions, h2o_val_frame$data, orig_rows)
-    h2o_metrics <- purrr::map(h2o_models, pull_h2o_metrics, h2o_val_frame$data)
+
+    val_truth <- val_frame_processed[outcome_name]
+    h2o_preds <- purrr::map(h2o_models, pull_h2o_predictions,
+                            h2o_val_frame$data, val_truth, orig_rows, mode) %>%
+      purrr::imap(~ bind_cols(.x, iter_grid[.y, ]))
+
+    # yardstick metrics
+    h2o_metrics <- purrr::map(h2o_preds, \(h2o_pred) {
+      estimate_metrics_safely <- safely(estimate_metrics)
+      metrics <- estimate_metrics_safely(h2o_pred, metrics, param_names,
+                              outcome_name, event_level)
+      if (is.null(metrics$error)) {
+        metrics$result
+      } else {
+        metrics$error
+      }
+    })
 
     grid_out <- iter_grid_info %>%
       tidyr::unnest(cols = data) %>%
@@ -133,11 +162,11 @@ tune_grid_loop_iter_h2o <- function(split,
         .iter_config
       ) %>%
       tidyr::unnest(.iter_config) %>%
-      dplyr::mutate(
-        .pred = h2o_preds,
-        .metrics = h2o_metrics
-      ) %>%
-      tidyr::unnest(.pred)
+      dplyr::mutate(.metrics = h2o_metrics)
+
+    if (control$save_pred) {
+      grid_out <- grid_out %>% dplyr::mutate(.predictions = h2o_preds)
+    }
 
     out[[iter_preprocessor]] <- grid_out
 
@@ -151,10 +180,24 @@ tune_grid_loop_iter_h2o <- function(split,
   out
 }
 
-pull_h2o_predictions <- function(h2o_model, val_frame, orig_rows) {
-  h2o_preds <- h2o::h2o.predict(h2o_model, val_frame)
-  tibble::as_tibble(h2o_preds) %>% dplyr::mutate(.row = orig_rows)
+
+pull_h2o_predictions <- function(h2o_model, val_frame, val_truth, orig_rows, mode) {
+  h2o_preds <- h2o::h2o.predict(h2o_model, val_frame) %>%
+    tibble::as_tibble()
+
+  if (mode == "classification") {
+    h2o_preds <- format_classprobs(h2o_preds %>% dplyr::select(-predict)) %>%
+      dplyr::bind_cols(format_class(h2o_preds %>% purrr::pluck("predict")))
+  } else {
+    h2o_preds <- format_num(h2o_preds %>% purrr::pluck("predict"))
+  }
+
+  h2o_preds %>%
+    dplyr::mutate(.row = orig_rows) %>%
+    dplyr::bind_cols(val_truth)
 }
+
+
 
 pull_h2o_metrics <- function(h2o_model, val_frame) {
   metrics <- slot(h2o::h2o.performance(h2o_model, val_frame), "metrics")

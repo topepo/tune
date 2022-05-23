@@ -6,11 +6,12 @@ library(foreach)
 h2o.init()
 
 data(two_class_dat)
-# doParallel::registerDoParallel()
+doParallel::registerDoParallel()
 # model and workflow spec
 folds <- vfold_cv(two_class_dat, nfolds = 10)
-glm_spec <- logistic_reg(penalty = tune("lambda"), mixture = tune("alpha")) |>
-    set_engine("h2o")
+glm_spec <- logistic_reg(penalty = tune("lambda")) %>%
+  set_engine("h2o") %>%
+  set_mode("classification")
 
 rec <- recipe(Class ~ A + B, two_class_dat) %>%
     step_ns(A, deg_free = tune("spline df"))
@@ -21,18 +22,22 @@ wf <- workflow() %>%
 
 # build grid_info and looping iterators
 pset <- extract_parameter_set_dials(wf)
+param_names <- pset$id
 model_param_names <- dplyr::filter(pset, source == "model_spec")$id
 grid <- dials::grid_regular(pset, levels = 5)
 
 grid <- tune:::check_grid(grid = grid, workflow = wf, pset = pset)
 grid_info <- tune:::compute_grid_info(wf, grid)
-control <- control_grid(verbose = TRUE)
+control <- control_grid(verbose = TRUE, save_pred = TRUE)
+metrics <- check_metrics(NULL, wf)
+
 packages <- c(control$pkgs, required_pkgs(wf))
 n_resamples <- nrow(folds)
 iterations <- seq_len(n_resamples)
 n_grid_info <- nrow(grid_info)
 rows <- seq_len(n_grid_info)
 splits <- folds$splits
+
 
 # model and preprocessor params
 
@@ -41,8 +46,7 @@ cols <- rlang::expr(
     .iter_model,
     .iter_config,
     .msg_model,
-    dplyr::all_of(model_param_names),
-    .submodels
+    dplyr::all_of(model_param_names)
   )
 )
 out_notes <-
@@ -62,12 +66,10 @@ results <- foreach::foreach(
       split = split,
       grid_info = grid_info_nest,
       workflow = wf,
+      metrics = metrics,
+      control = control,
       seed = seed
     )
 }
 
-results <- tibble::tibble(.predictions = results)
-
-results[[1L]]
-str(results[[1L]][[".metrics"]][[1L]], max.level = 2)
-
+results[[1]]
