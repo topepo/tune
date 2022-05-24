@@ -24,7 +24,10 @@ wf <- workflow() %>%
 pset <- extract_parameter_set_dials(wf)
 param_names <- pset$id
 model_param_names <- dplyr::filter(pset, source == "model_spec")$id
-grid <- dials::grid_regular(pset, levels = 5)
+grid <- tidyr::expand_grid(
+  `spline df` = c(1, 3, 5, 10, 15),
+  `lambda` = c(1e-5, 1e-4, 1e-3, 1e-2, 1e-1)
+)
 
 grid <- tune:::check_grid(grid = grid, workflow = wf, pset = pset)
 grid_info <- tune:::compute_grid_info(wf, grid)
@@ -73,3 +76,14 @@ results <- foreach::foreach(
 }
 
 results[[1]]
+results[[1]]$.metrics
+results[[1]]$.predictions[[1]]
+
+results[[1]] %>%
+  select(.predictions) %>%
+  unnest(.predictions)
+
+
+results[[1]] %>%
+  select(.metrics) %>%
+  unnest(.metrics)
