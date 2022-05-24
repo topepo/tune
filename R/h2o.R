@@ -216,7 +216,7 @@ pull_h2o_metrics <- function(prediction,
                              outcome_name,
                              event_level) {
 
-  estimate_metrics_safely <- safely(estimate_metrics)
+  estimate_metrics_safely <- purrrr::safely(estimate_metrics)
   metrics <- estimate_metrics_safely(prediction,
                                      metrics,
                                      param_names,
